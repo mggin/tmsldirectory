@@ -10,6 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "csvtojson": "^2.0.8",
+    "gender-detection": "^0.1.0",
     "realm": "^2.21.1"
   }
 }

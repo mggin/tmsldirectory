@@ -1,6 +1,7 @@
 const Realm = require('realm')
 const Csv = require('csvtojson')
-var fs = require('fs');
+const fs = require('fs');
+const gender = require('gender-detection');
 const {
     HouseHold,
     Address,
@@ -11,17 +12,20 @@ const {
     DateOfBirth
 } = require('./realm_schema')
 
+
+
 const main_csv_path = './main.csv'
 const sub_csv_path = './sub.csv'
 
-let sampel_string = '450 E 148th St Glenpool 74033****W(89      '
-let zip_code_pattern = /\d\d\d\d\d/gi;
-let mainJson = []
+
+// zip code pattern 
+const zip_code_pattern = /74\d\d\d/gi;
+
 
 
 function getZipCode(address) {
     let zip_code = address.match(zip_code_pattern)
-    return zip_code ? zip_code[0] : null 
+    return zip_code ? parseInt(zip_code[0]) : null 
 }
 
 function getCityName(address) {
@@ -55,127 +59,109 @@ function generateMemberID(index) {
 }
 
 function jsonFun() {
-    let household_main_list = []
-    let household_sub_list = []
+    // let household_main_list = []
+    // let household_sub_list = []
+
+    // get the date from main csv turn into Realm Database.
     Csv()
         .fromFile(main_csv_path)
         .then((mainObjs)=>{
             
             mainObjs.map((mainObj) => {  
-                let address = {}
-                let household_obj = {members: []}
-                //console.log(mainObj.index)
-                household_obj.index = mainObj.index       
-                household_obj.primary_number = mainObj.primary_number ? mainObj.primary_number : null
-                household_obj.secondary_number = mainObj.secondary_number ? mainObj.secondary_number : null
-                //console.log(mainObj.address)
-                address.street = getStreetAddress(mainObj.address)
-                address.city = getCityName(mainObj.address)
-                address.zip_code = getZipCode(mainObj.address)
-                household_obj.address = address
-                household_main_list.push(household_obj)
+                Realm.open({schema: [HouseHold, Address, PhoneNumber, EmailAddress, Members, Names, DateOfBirth]})
+                    .then(realm => {
+                        
+                        realm.write(() => {
+                            let address = mainObj.address
+                            let primary_number = mainObj.primary_number
+                            let secondary_number = mainObj.primary_number
+                            let household = realm.create('HouseHold', { members: []})
+                            let address_obj = realm.create('Address', {
+                                street: getStreetAddress(address),
+                                city: getCityName(address),
+                                zip_code: getZipCode(address)
+                            })
+                            let phone_obj = realm.create('PhoneNumber', {
+                                primary_number,
+                                secondary_number,
+                            })
+                            let email_obj = realm.create('EmailAddress', { })
+                            household.id = parseInt(mainObj.index)
+                            household.address = address_obj
+                            household.phone_number = phone_obj
+                            household.email_address = email_obj
 
-                
-                
+                        })
+                        
+                    })
+                       
             })
                     
         })
         .then(() => {
             Csv()
                 .fromFile(sub_csv_path)
-                .then(subObjs => {    
-                    subObjs.map(subObj => {
-                        let member = {}
-                        let date_of_birth = {}
-                        member.index = subObj.index
-                        member.tribal_name = subObj.tribal_name ? subObj.tribal_name : null
-                        member.baptismal_name = subObj.baptismal_name ? subObj.baptismal_name : null
-                        member.nick_name = subObj.nick_name ? subObj.nick_name : null
-                        member.others_name = subObj.note ? subObj.note : null
-                        date_of_birth.year = subObj.year ? subObj.year : null
-                        date_of_birth.month = null
-                        date_of_birth.day = null
-                        member.date_of_birth = date_of_birth
-                        household_sub_list.push(member)
-                        
-                    })
-                    
-                })
-                .then(() => {
-                    household_main_list.map(main => {
-                        main.members = household_sub_list.filter(sub => sub.index == main.index)
-                    })
-                    //console.log(household_main_list)
-                })
-                .then(() => {
-                    //console.log({household_obj})
-                    fs.writeFile("test.txt", JSON.stringify(household_main_list), function(err) {
-                        if (err) {
-                            console.log(err);
-                        }
-                    });
-                })
-        })
+                .then(members => {    
+                    members.map((member, counter) => {
+                        Realm.open({schema: [HouseHold, Address, PhoneNumber, EmailAddress, Members, Names, DateOfBirth]})
+                            .then(realm => {
+                                let tribal_name = member.tribal_name
+                                let baptismal_name = member.baptismal_name
+                                let nick_name = member.nick_name
+                                let others_name = member.note
+                                let year = member.year ? parseInt(member.year) : null
+                                let gender_status = gender.detect(member.baptismal_name)
+                                realm.write(() => {
+                                    
+                                    let householdID = realm.objects('HouseHold').filtered(`id == ${parseInt(member.index)}`)
+                                    let member_obj = realm.create('Members', { })
+                                    let names = realm.create('Names', {
+                                        tribal_name,
+                                        baptismal_name,
+                                        nick_name,
+                                        others_name
+                                    })
+                                    let date_of_birth = realm.create('DateOfBirth', { 
+                                        year
+                                    })
+                                    member_obj.gender = gender_status
+                                    member_obj.date_of_birth = date_of_birth
+                                    member_obj.names = names
+                                    member_obj.memberID = generateMemberID(counter)
+                                    //console.log({counter})
+                                    member_obj.index = parseInt(member.index)
+                                    householdID[0].members.push(member_obj)
+                                    //if (householdID.length)
+                                    if (householdID[0].members.length > 1) {
+                                        householdID[0].isFamily = true
+                                    } else {
+                                        householdID[0].isFamily = false
+                                    }
+                                    
 
-        //console.log({household_obj})
-        // fs.writeFile("test.txt", JSON.stringify(household_list), function(err) {
-        //     if (err) {
-        //         console.log(err);
-        //     }
-        // });
-
-                 
-}
-
-function subJsonFun() {
-    let household_sub_list = []
-    Csv()
-        .fromFile(sub_csv_path)
-        .then(subObjs => {    
-            subObjs.map(subObj => {
-                let member = {}
-                let date_of_birth = {}
-                member.index = member.index
-                member.tribal_name = subObj.tribal_name ? subObj.tribal_name : null
-                member.baptismal_name = subObj.baptismal_name ? subObj.baptismal_name : null
-                member.nick_name = subObj.nick_name ? subObj.nick_name : null
-                member.others_name = subObj.note ? subObj.note : null
-                date_of_birth.year = subObj.year ? subObj.year : null
-                date_of_birth.month = null
-                date_of_birth.day = null
-                member.date_of_birth = date_of_birth
-                household_sub_list.push(member)
+                                    
+                                })
+                                
+                            })
+                            .then((realm) => {
+                                //console.log({realm})
+                                process.exit()
+                            })
+                })                
+            })
+            .then(() => {
+                //process.exit()
             })
             
-        })
-        .then(() => {
             
-        })
-
+                
+        })   
+          
 }
+
     
 
 
-
-function run() {
-    // Realm.open({schema: [HouseHold, Address, PhoneNumber, EmailAddress, Members, Names, DateOfBirth]})
-    //     .then(realm => {
-    //         realm.write(() => {
-    //             let household = realm.create('HouseHold', { })
-    //             let address = realm.create('Address', { })
-    //             let phone_number = realm.create('PhoneNumber', { })
-    //             let email_address = realm.create('EmailAddress', { })
-    //             let names = realm.create('Names', { })
-    //             let date_of_birth = realm.create('DateOfBirth', { })
-    //             // [1,2,3,3,3,3,3].map(() => {
-    //             //     phone_number.primary_number = 1
-    //             // })
-    //         })
-    //     })
-    
-
-            
-}
 
 jsonFun()
 
